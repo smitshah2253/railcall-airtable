@@ -1,7 +1,7 @@
 {
   "slug": "smitshah/airtable",
   "version": "1.0.0",
-  "description": "Production-grade integration with Airtable REST API. Manage records, execute batch CRUD/upserts, inspect and mutate schemas, collaborate via comments, and discover bases. contest:2026Q3",
+  "description": "Production-grade integration with Airtable REST API. Manage records, execute batch CRUD/upserts, inspect and mutate schemas, collaborate via comments, and discover bases. contest:round2 contest:2026Q3",
   "auth": {
     "type": "api_key",
     "env_var": "AIRTABLE_PAT"

@@ -1,7 +1,7 @@
 # Airtable Integration Module for RailCall
 
 > Connect AI agents to Airtable REST API. Full CRUD, batch operations, schemas, and comments with zero dependencies and airlock safety.  
-> **Contest Tag:** `contest:2026Q3` | **Publisher:** `smitshah/airtable` | **Version:** `1.0.0`
+> **Contest Tag:** `contest:round2` (`contest:2026Q3`) | **Publisher:** `smitshah/airtable` | **Version:** `1.0.0`
 
 ---
 
