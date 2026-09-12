@@ -1,0 +1,695 @@
+{
+  "slug": "smitshah/airtable",
+  "version": "1.0.0",
+  "description": "Production-grade integration with Airtable REST API. Manage records, execute batch CRUD/upserts, inspect and mutate schemas, collaborate via comments, and discover bases. contest:2026Q3",
+  "auth": {
+    "type": "api_key",
+    "env_var": "AIRTABLE_PAT"
+  },
+  "requires": {
+    "network": [
+      "api.airtable.com"
+    ],
+    "subprocess": false,
+    "filesystem_writes": []
+  },
+  "license_required": false,
+  "commands": [
+    {
+      "name": "create_record",
+      "description": "Add a new record to the specified Airtable table. Requires airlock approval.",
+      "side_effects": "external",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable Base ID (e.g. appXXXXXXXXXXXXXX)"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table in the base"
+          },
+          "fields": {
+            "type": "object",
+            "description": "Key-value mapping of field names to values for the new record"
+          },
+          "typecast": {
+            "type": "boolean",
+            "description": "Perform best-effort automatic data conversion (e.g. string to choice)"
+          }
+        },
+        "required": [
+          "base_id",
+          "table_name",
+          "fields"
+        ]
+      }
+    },
+    {
+      "name": "update_record",
+      "description": "Update fields on an existing record in an Airtable table (PATCH). Requires airlock approval.",
+      "side_effects": "external",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable Base ID (e.g. appXXXXXXXXXXXXXX)"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table"
+          },
+          "record_id": {
+            "type": "string",
+            "description": "The Airtable record ID to update (e.g. recXXXXXXXXXXXXXX)"
+          },
+          "fields": {
+            "type": "object",
+            "description": "Key-value mapping of field names to update"
+          },
+          "typecast": {
+            "type": "boolean",
+            "description": "Perform best-effort automatic data conversion"
+          }
+        },
+        "required": [
+          "base_id",
+          "table_name",
+          "record_id",
+          "fields"
+        ]
+      }
+    },
+    {
+      "name": "delete_record",
+      "description": "Permanently delete a record from an Airtable table. Requires airlock approval.",
+      "side_effects": "external",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable Base ID (e.g. appXXXXXXXXXXXXXX)"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table"
+          },
+          "record_id": {
+            "type": "string",
+            "description": "The Airtable record ID to delete (e.g. recXXXXXXXXXXXXXX)"
+          }
+        },
+        "required": [
+          "base_id",
+          "table_name",
+          "record_id"
+        ]
+      }
+    },
+    {
+      "name": "get_record",
+      "description": "Retrieve a single record by its record ID from an Airtable table.",
+      "side_effects": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable Base ID (e.g. appXXXXXXXXXXXXXX)"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table"
+          },
+          "record_id": {
+            "type": "string",
+            "description": "The Airtable record ID to retrieve (e.g. recXXXXXXXXXXXXXX)"
+          }
+        },
+        "required": [
+          "base_id",
+          "table_name",
+          "record_id"
+        ]
+      }
+    },
+    {
+      "name": "list_records",
+      "description": "List records from an Airtable table with optional filtering, sorting, view restrictions, and pagination.",
+      "side_effects": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable Base ID (e.g. appXXXXXXXXXXXXXX)"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table"
+          },
+          "max_records": {
+            "type": "integer",
+            "description": "Total maximum number of records to return (defaults to 100, max 1000)"
+          },
+          "page_size": {
+            "type": "integer",
+            "description": "Number of records per page (max 100)"
+          },
+          "offset": {
+            "type": "string",
+            "description": "Pagination cursor token returned by a previous list call"
+          },
+          "view": {
+            "type": "string",
+            "description": "Name or ID of a view in the table to limit results to"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Subset of field names to include in each returned record"
+          },
+          "sort": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string"
+                },
+                "direction": {
+                  "type": "string",
+                  "enum": [
+                    "asc",
+                    "desc"
+                  ]
+                }
+              },
+              "required": [
+                "field"
+              ]
+            },
+            "description": "List of sort objects, e.g. [{'field': 'Name', 'direction': 'asc'}]"
+          }
+        },
+        "required": [
+          "base_id",
+          "table_name"
+        ]
+      }
+    },
+    {
+      "name": "search_records",
+      "description": "Filter records in an Airtable table using a formula expression (e.g. {Status}='Done').",
+      "side_effects": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable Base ID (e.g. appXXXXXXXXXXXXXX)"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table"
+          },
+          "filter_by_formula": {
+            "type": "string",
+            "description": "Airtable formula string to evaluate against each record"
+          },
+          "max_records": {
+            "type": "integer",
+            "description": "Maximum number of matching records to return (default 100)"
+          }
+        },
+        "required": [
+          "base_id",
+          "table_name",
+          "filter_by_formula"
+        ]
+      }
+    },
+    {
+      "name": "list_tables",
+      "description": "List all tables and field schema definitions in a given Airtable base.",
+      "side_effects": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable Base ID (e.g. appXXXXXXXXXXXXXX)"
+          }
+        },
+        "required": [
+          "base_id"
+        ]
+      }
+    },
+    {
+      "name": "batch_create_records",
+      "description": "Create up to 10 records in a single batch request in an Airtable table. Requires airlock approval.",
+      "side_effects": "external",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable Base ID (e.g. appXXXXXXXXXXXXXX)"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "fields": {
+                  "type": "object",
+                  "description": "Key-value mapping of field names to values"
+                }
+              },
+              "required": [
+                "fields"
+              ]
+            },
+            "description": "Array of up to 10 record objects to create"
+          },
+          "typecast": {
+            "type": "boolean",
+            "description": "Perform best-effort automatic data conversion"
+          }
+        },
+        "required": [
+          "base_id",
+          "table_name",
+          "records"
+        ]
+      }
+    },
+    {
+      "name": "batch_update_records",
+      "description": "Update up to 10 records in a single batch request (PATCH). Requires airlock approval.",
+      "side_effects": "external",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable Base ID (e.g. appXXXXXXXXXXXXXX)"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Record ID to update (e.g. recXXXXXXXXXXXXXX)"
+                },
+                "fields": {
+                  "type": "object",
+                  "description": "Key-value mapping of fields to update"
+                }
+              },
+              "required": [
+                "id",
+                "fields"
+              ]
+            },
+            "description": "Array of up to 10 record objects with id and fields"
+          },
+          "typecast": {
+            "type": "boolean",
+            "description": "Perform best-effort automatic data conversion"
+          }
+        },
+        "required": [
+          "base_id",
+          "table_name",
+          "records"
+        ]
+      }
+    },
+    {
+      "name": "batch_delete_records",
+      "description": "Delete up to 10 records in a single batch request. Requires airlock approval.",
+      "side_effects": "external",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable Base ID (e.g. appXXXXXXXXXXXXXX)"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table"
+          },
+          "record_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Array of up to 10 Airtable record IDs to delete"
+          }
+        },
+        "required": [
+          "base_id",
+          "table_name",
+          "record_ids"
+        ]
+      }
+    },
+    {
+      "name": "batch_upsert_records",
+      "description": "Insert or update up to 10 records matching on key fields (upsert). Requires airlock approval.",
+      "side_effects": "external",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable Base ID (e.g. appXXXXXXXXXXXXXX)"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table"
+          },
+          "fields_to_merge_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Field names used to determine whether a record already exists"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "fields": {
+                  "type": "object",
+                  "description": "Key-value mapping of field names to values"
+                }
+              },
+              "required": [
+                "fields"
+              ]
+            },
+            "description": "Array of up to 10 record objects to upsert"
+          },
+          "typecast": {
+            "type": "boolean",
+            "description": "Perform best-effort automatic data conversion"
+          }
+        },
+        "required": [
+          "base_id",
+          "table_name",
+          "fields_to_merge_on",
+          "records"
+        ]
+      }
+    },
+    {
+      "name": "list_bases",
+      "description": "List all Airtable bases accessible by the current token.",
+      "side_effects": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "offset": {
+            "type": "string",
+            "description": "Pagination cursor token returned by previous call"
+          }
+        }
+      }
+    },
+    {
+      "name": "add_comment",
+      "description": "Add a comment to an Airtable record. Requires airlock approval.",
+      "side_effects": "external",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable Base ID (e.g. appXXXXXXXXXXXXXX)"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table"
+          },
+          "record_id": {
+            "type": "string",
+            "description": "The record ID to comment on (e.g. recXXXXXXXXXXXXXX)"
+          },
+          "text": {
+            "type": "string",
+            "description": "The comment message text (supports @[usrXXXXXXXXXXXXXXX] mentions)"
+          }
+        },
+        "required": [
+          "base_id",
+          "table_name",
+          "record_id",
+          "text"
+        ]
+      }
+    },
+    {
+      "name": "list_comments",
+      "description": "List comments on a record with pagination.",
+      "side_effects": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable Base ID (e.g. appXXXXXXXXXXXXXX)"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table"
+          },
+          "record_id": {
+            "type": "string",
+            "description": "The record ID to inspect (e.g. recXXXXXXXXXXXXXX)"
+          },
+          "offset": {
+            "type": "string",
+            "description": "Pagination cursor token"
+          },
+          "page_size": {
+            "type": "integer",
+            "description": "Number of comments to return (max 100)"
+          }
+        },
+        "required": [
+          "base_id",
+          "table_name",
+          "record_id"
+        ]
+      }
+    },
+    {
+      "name": "create_table",
+      "description": "Create a new table with fields in an Airtable base. Requires airlock approval.",
+      "side_effects": "external",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable Base ID (e.g. appXXXXXXXXXXXXXX)"
+          },
+          "name": {
+            "type": "string",
+            "description": "The name of the new table"
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional description of the table"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Field name"
+                },
+                "type": {
+                  "type": "string",
+                  "description": "Field type (e.g. singleLineText, multilineText, number, checkbox, singleSelect)"
+                },
+                "description": {
+                  "type": "string",
+                  "description": "Optional field description"
+                },
+                "options": {
+                  "type": "object",
+                  "description": "Field configuration options (e.g. choices for singleSelect)"
+                }
+              },
+              "required": [
+                "name",
+                "type"
+              ]
+            },
+            "description": "Array of initial field definitions for the table"
+          }
+        },
+        "required": [
+          "base_id",
+          "name",
+          "fields"
+        ]
+      }
+    },
+    {
+      "name": "create_field",
+      "description": "Add a new column (field) to an existing table. Requires airlock approval.",
+      "side_effects": "external",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable Base ID (e.g. appXXXXXXXXXXXXXX)"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table"
+          },
+          "name": {
+            "type": "string",
+            "description": "Name for the new field"
+          },
+          "type": {
+            "type": "string",
+            "description": "Field type (e.g. singleLineText, number, date, checkbox, singleSelect, email, url)"
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional description for the field"
+          },
+          "options": {
+            "type": "object",
+            "description": "Optional field options depending on type"
+          }
+        },
+        "required": [
+          "base_id",
+          "table_name",
+          "name",
+          "type"
+        ]
+      }
+    },
+    {
+      "name": "whoami",
+      "description": "Retrieve current user ID and active token scopes for diagnostics.",
+      "side_effects": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "update_table",
+      "description": "Update table name or description. Requires airlock approval.",
+      "side_effects": "external",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable Base ID (e.g. appXXXXXXXXXXXXXX)"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table to modify"
+          },
+          "name": {
+            "type": "string",
+            "description": "New table name"
+          },
+          "description": {
+            "type": "string",
+            "description": "New table description"
+          }
+        },
+        "required": [
+          "base_id",
+          "table_name"
+        ]
+      }
+    },
+    {
+      "name": "update_field",
+      "description": "Update field name or description. Requires airlock approval.",
+      "side_effects": "external",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable Base ID (e.g. appXXXXXXXXXXXXXX)"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table"
+          },
+          "field_id": {
+            "type": "string",
+            "description": "The ID or name of the field to update"
+          },
+          "name": {
+            "type": "string",
+            "description": "New field name"
+          },
+          "description": {
+            "type": "string",
+            "description": "New field description"
+          }
+        },
+        "required": [
+          "base_id",
+          "table_name",
+          "field_id"
+        ]
+      }
+    },
+    {
+      "name": "list_webhooks",
+      "description": "List all configured webhooks for an Airtable base.",
+      "side_effects": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable Base ID (e.g. appXXXXXXXXXXXXXX)"
+          }
+        },
+        "required": [
+          "base_id"
+        ]
+      }
+    }
+  ]
+}
