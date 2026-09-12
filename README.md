@@ -1,7 +1,9 @@
 # Airtable Integration Module for RailCall
 
-> Connect AI agents to Airtable REST API. Full CRUD, batch operations, schemas, and comments with zero dependencies and airlock safety.  
-> **Contest Tag:** `contest:round2` (`contest:2026Q3`) | **Publisher:** `smit-shah/airtable` | **Version:** `1.0.2`
+Connect AI agents to Airtable REST API. Full CRUD, batch operations, schemas, and comments with zero dependencies and airlock safety.
+
+**Contest Tags:** `contest:round2` | `contest:2026Q3`  
+**Publisher:** `smit-shah/airtable` | **Version:** `1.0.4`
 
 ---
 
@@ -9,62 +11,72 @@
 
 Enables RailCall agents to treat Airtable as a relational database. Automates CRM syncs, bulk data operations, schema migrations, and record collaboration with strict airlock boundaries.
 
----
-
-## Commands (20 Total)
-
-| Command | Side Effects | Airlock | Description |
-| :--- | :--- | :--- | :--- |
-| `get_record` / `list_records` | `none` | No | Fetch single record or list with sort/filter/view |
-| `search_records` | `none` | No | Filter records using Airtable formula syntax |
-| `create_record` / `update_record` | `external` | **Yes** | Add new record or modify fields (PATCH) |
-| `delete_record` | `external` | **Yes** | Permanently remove a record |
-| `batch_create_records` | `external` | **Yes** | Bulk create up to 10 records per request |
-| `batch_update_records` | `external` | **Yes** | Bulk update up to 10 records per request |
-| `batch_delete_records` | `external` | **Yes** | Bulk delete up to 10 records per request |
-| `batch_upsert_records` | `external` | **Yes** | Insert or update up to 10 records matching on key fields |
-| `list_bases` / `list_tables` | `none` | No | Discover accessible bases and table/field schemas |
-| `create_table` / `update_table` | `external` | **Yes** | Create tables with fields or rename/describe tables |
-| `create_field` / `update_field` | `external` | **Yes** | Add new column or update existing column config |
-| `add_comment` | `external` | **Yes** | Post note or mention (`@[usrXXX]`) on record |
-| `list_comments` | `none` | No | Retrieve comment history for a record |
-| `whoami` / `list_webhooks` | `none` | No | Check token scopes/ID and active webhook status |
+Zero external dependencies (pure Python standard library `urllib.request`). Mutating operations require human airlock review before committing changes.
 
 ---
 
-## Setup & Authentication
+## 20 Governed Commands
 
-1. Create a Personal Access Token at [airtable.com/create/tokens](https://airtable.com/create/tokens) with scopes: `data.records:read`, `data.records:write`, `schema.bases:read`, `schema.bases:write`.
-2. Grant base access to your token.
-3. Set secret in RailCall workspace:
-   ```bash
-   railcall secrets set AIRTABLE_PAT patXXXXXXXXXXXXXX
-   ```
+### Core Record CRUD (Airlock on Writes)
+- `get_record` — Fetch single record by ID (Side effects: none)
+- `list_records` — Filter, sort, and paginate records with view support (Side effects: none)
+- `search_records` — Search records using Airtable formula syntax (Side effects: none)
+- `create_record` — Create a single record in a table (Side effects: external / Airlock)
+- `update_record` — Update fields on an existing record via PATCH (Side effects: external / Airlock)
+- `delete_record` — Permanently remove a record (Side effects: external / Airlock)
 
-*Security: Token injected strictly via execution context. Zero `os.environ` access, zero disk writes, credentials automatically redacted in logs and receipts.*
+### High-Volume Batch Operations (Max 10 Records)
+- `batch_create_records` — Bulk create records in a single request (Airlock)
+- `batch_update_records` — Bulk update records in a single request (Airlock)
+- `batch_delete_records` — Bulk delete up to 10 records (Airlock)
+- `batch_upsert_records` — Upsert records matching on unique key fields (Airlock)
+
+### Schema & Base Management
+- `list_bases` — Discover all bases accessible to token
+- `get_base_schema` — Inspect table schemas, fields, and views
+- `create_table` — Programmatically create new table with schema (Airlock)
+- `update_table` — Rename table or update table description (Airlock)
+- `create_field` — Add new column to an existing table (Airlock)
+- `update_field` — Rename or edit column configuration (Airlock)
+
+### Collaboration & Webhooks
+- `create_comment` — Post note or user mention (`@[usrXXX]`) on record (Airlock)
+- `list_comments` — Read comment history and threads on a record
+- `whoami` — Inspect active token permissions and user ID
+- `list_webhooks` — Inspect active webhooks on a base
 
 ---
 
-## Agent Usage Examples
+## Quick Setup
+
+### 1. Install Module
+> `railcall market install smit-shah/airtable`
+
+### 2. Configure Airtable PAT
+Generate a Personal Access Token at [airtable.com/create/tokens](https://airtable.com/create/tokens) with scopes: `data.records:read`, `data.records:write`, `schema.bases:read`, `schema.bases:write`.
+
+Register the secret in your local vault:
+> `railcall secrets set AIRTABLE_PAT patXXXXXXXXXXXXXXX`
+
+---
+
+## Enterprise Workflows
 
 ### 1. Batch Lead Sync & Upsert
-> *"Upsert 5 new leads into Airtable matching on Email. Leave a review note on high-priority leads."*
+*Upsert 5 new leads into Airtable matching on Email. Leave a review note on high-priority leads.*
 
-The agent executes `batch_upsert_records(fields_to_merge_on=["Email"])`. Airlock prompts human review before writes execute. The agent then calls `add_comment` on high-priority records.
+The agent executes `batch_upsert_records` matching on Email. Airlock prompts human review before writes execute. The agent then calls `create_comment` on high-priority records.
 
 ### 2. Schema Discovery & Migration
-> *"Check if 'Sprint Bugs' table has a 'Severity' column; add it if missing."*
+*Check if Sprint Bugs table has a Severity column; add it if missing.*
 
-The agent calls `list_tables`, confirms column absence, then requests airlock confirmation to invoke `create_field`.
+The agent calls `get_base_schema`, confirms column absence, then requests airlock confirmation to invoke `create_field`.
 
 ---
 
-## Testing
+## Verification & Testing
 
-```bash
-# Offline unit tests (26 tests, 0 credentials needed)
-python tests/test_airtable.py
-
-# Live integration test (self-cleaning)
-python tests/test_airtable.py --live --pat <PAT> --base <BASE_ID> --table <TABLE_NAME>
-```
+- **Offline Unit Tests (26 tests, 0 credentials needed):**  
+  `python tests/test_airtable.py`
+- **Live Integration Test (automated self-cleanup):**  
+  `python tests/test_airtable.py --live --pat <PAT> --base <BASE_ID> --table <TABLE_NAME>`
