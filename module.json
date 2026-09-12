@@ -1,6 +1,8 @@
 {
-  "slug": "smitshah/airtable",
-  "version": "1.0.0",
+  "id": "smit-shah/airtable",
+  "slug": "smit-shah/airtable",
+  "name": "Airtable",
+  "version": "1.0.1",
   "description": "Production-grade integration with Airtable REST API. Manage records, execute batch CRUD/upserts, inspect and mutate schemas, collaborate via comments, and discover bases. contest:round2 contest:2026Q3",
   "auth": {
     "type": "api_key",
@@ -44,7 +46,9 @@
           "table_name",
           "fields"
         ]
-      }
+      },
+      "id": "create_record",
+      "title": "Create Record"
     },
     {
       "name": "update_record",
@@ -80,7 +84,9 @@
           "record_id",
           "fields"
         ]
-      }
+      },
+      "id": "update_record",
+      "title": "Update Record"
     },
     {
       "name": "delete_record",
@@ -107,7 +113,9 @@
           "table_name",
           "record_id"
         ]
-      }
+      },
+      "id": "delete_record",
+      "title": "Delete Record"
     },
     {
       "name": "get_record",
@@ -134,7 +142,9 @@
           "table_name",
           "record_id"
         ]
-      }
+      },
+      "id": "get_record",
+      "title": "Get Record"
     },
     {
       "name": "list_records",
@@ -201,7 +211,9 @@
           "base_id",
           "table_name"
         ]
-      }
+      },
+      "id": "list_records",
+      "title": "List Records"
     },
     {
       "name": "search_records",
@@ -232,7 +244,9 @@
           "table_name",
           "filter_by_formula"
         ]
-      }
+      },
+      "id": "search_records",
+      "title": "Search Records"
     },
     {
       "name": "list_tables",
@@ -249,7 +263,9 @@
         "required": [
           "base_id"
         ]
-      }
+      },
+      "id": "list_tables",
+      "title": "List Tables"
     },
     {
       "name": "batch_create_records",
@@ -292,7 +308,9 @@
           "table_name",
           "records"
         ]
-      }
+      },
+      "id": "batch_create_records",
+      "title": "Batch Create Records"
     },
     {
       "name": "batch_update_records",
@@ -340,7 +358,9 @@
           "table_name",
           "records"
         ]
-      }
+      },
+      "id": "batch_update_records",
+      "title": "Batch Update Records"
     },
     {
       "name": "batch_delete_records",
@@ -370,7 +390,9 @@
           "table_name",
           "record_ids"
         ]
-      }
+      },
+      "id": "batch_delete_records",
+      "title": "Batch Delete Records"
     },
     {
       "name": "batch_upsert_records",
@@ -421,7 +443,9 @@
           "fields_to_merge_on",
           "records"
         ]
-      }
+      },
+      "id": "batch_upsert_records",
+      "title": "Batch Upsert Records"
     },
     {
       "name": "list_bases",
@@ -435,7 +459,9 @@
             "description": "Pagination cursor token returned by previous call"
           }
         }
-      }
+      },
+      "id": "list_bases",
+      "title": "List Bases"
     },
     {
       "name": "add_comment",
@@ -467,7 +493,9 @@
           "record_id",
           "text"
         ]
-      }
+      },
+      "id": "add_comment",
+      "title": "Add Comment"
     },
     {
       "name": "list_comments",
@@ -502,7 +530,9 @@
           "table_name",
           "record_id"
         ]
-      }
+      },
+      "id": "list_comments",
+      "title": "List Comments"
     },
     {
       "name": "create_table",
@@ -558,7 +588,9 @@
           "name",
           "fields"
         ]
-      }
+      },
+      "id": "create_table",
+      "title": "Create Table"
     },
     {
       "name": "create_field",
@@ -598,7 +630,9 @@
           "name",
           "type"
         ]
-      }
+      },
+      "id": "create_field",
+      "title": "Create Field"
     },
     {
       "name": "whoami",
@@ -607,7 +641,9 @@
       "input_schema": {
         "type": "object",
         "properties": {}
-      }
+      },
+      "id": "whoami",
+      "title": "Who Am I"
     },
     {
       "name": "update_table",
@@ -637,7 +673,9 @@
           "base_id",
           "table_name"
         ]
-      }
+      },
+      "id": "update_table",
+      "title": "Update Table"
     },
     {
       "name": "update_field",
@@ -672,7 +710,9 @@
           "table_name",
           "field_id"
         ]
-      }
+      },
+      "id": "update_field",
+      "title": "Update Field"
     },
     {
       "name": "list_webhooks",
@@ -689,7 +729,11 @@
         "required": [
           "base_id"
         ]
-      }
+      },
+      "id": "list_webhooks",
+      "title": "List Webhooks"
     }
-  ]
+  ],
+  "manifest_version": 2,
+  "publisher_pubkey": "0d3d17b407969fad75f0fc191087b41a4ffd26f78abb1a2cf5c9f2d9c69d5313"
 }
