@@ -2,8 +2,8 @@
   "id": "smit-shah/airtable",
   "slug": "smit-shah/airtable",
   "name": "Airtable",
-  "version": "1.0.4",
-  "description": "Production-grade integration with Airtable REST API. Manage records, execute batch CRUD/upserts, inspect and mutate schemas, collaborate via comments, and discover bases. contest:round2 contest:2026Q3",
+  "version": "1.0.5",
+  "description": "Production-grade integration with Airtable REST API. Free-tier optimized with automatic 429 rate-limit backoff, auto-chunked batch operations up to 100 records, capacity monitoring, and airlock governance. contest:round2 contest:2026Q3",
   "auth": {
     "type": "api_key",
     "env_var": "AIRTABLE_PAT"
@@ -269,7 +269,7 @@
     },
     {
       "name": "batch_create_records",
-      "description": "Create up to 10 records in a single batch request in an Airtable table. Requires airlock approval.",
+      "description": "Create up to 100 records in batch in an Airtable table (automatically chunked into Airtable 10-record subrequests). Requires airlock approval.",
       "side_effects": "external",
       "input_schema": {
         "type": "object",
@@ -296,7 +296,7 @@
                 "fields"
               ]
             },
-            "description": "Array of up to 10 record objects to create"
+            "description": "Array of up to 100 record objects to create (auto-chunked)"
           },
           "typecast": {
             "type": "boolean",
@@ -314,7 +314,7 @@
     },
     {
       "name": "batch_update_records",
-      "description": "Update up to 10 records in a single batch request (PATCH). Requires airlock approval.",
+      "description": "Update up to 100 records in batch (PATCH), automatically chunked into 10-record subrequests. Requires airlock approval.",
       "side_effects": "external",
       "input_schema": {
         "type": "object",
@@ -346,7 +346,7 @@
                 "fields"
               ]
             },
-            "description": "Array of up to 10 record objects with id and fields"
+            "description": "Array of up to 100 record objects with id and fields (auto-chunked)"
           },
           "typecast": {
             "type": "boolean",
@@ -364,7 +364,7 @@
     },
     {
       "name": "batch_delete_records",
-      "description": "Delete up to 10 records in a single batch request. Requires airlock approval.",
+      "description": "Delete up to 100 records in batch, automatically chunked into 10-record subrequests. Requires airlock approval.",
       "side_effects": "external",
       "input_schema": {
         "type": "object",
@@ -382,7 +382,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Array of up to 10 Airtable record IDs to delete"
+            "description": "Array of up to 100 Airtable record IDs to delete (auto-chunked)"
           }
         },
         "required": [
@@ -396,7 +396,7 @@
     },
     {
       "name": "batch_upsert_records",
-      "description": "Insert or update up to 10 records matching on key fields (upsert). Requires airlock approval.",
+      "description": "Insert or update up to 100 records matching on key fields (upsert), automatically chunked into 10-record subrequests. Requires airlock approval.",
       "side_effects": "external",
       "input_schema": {
         "type": "object",
@@ -430,7 +430,7 @@
                 "fields"
               ]
             },
-            "description": "Array of up to 10 record objects to upsert"
+            "description": "Array of up to 100 record objects to upsert (auto-chunked)"
           },
           "typecast": {
             "type": "boolean",
@@ -732,6 +732,99 @@
       },
       "id": "list_webhooks",
       "title": "List Webhooks"
+    },
+    {
+      "name": "count_records",
+      "description": "Count total records in an Airtable table and monitor Free Tier limit capacity (1,000 record ceiling).",
+      "side_effects": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable Base ID (e.g. appXXXXXXXXXXXXXX)"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table"
+          },
+          "view": {
+            "type": "string",
+            "description": "Optional view name or ID to count records within"
+          },
+          "filter_by_formula": {
+            "type": "string",
+            "description": "Optional Airtable formula to filter counted records"
+          }
+        },
+        "required": [
+          "base_id",
+          "table_name"
+        ]
+      },
+      "id": "count_records",
+      "title": "Count Records & Capacity Monitor"
+    },
+    {
+      "name": "sync_and_notify",
+      "description": "Compound automation: Upsert records matching on unique keys and attach audit comments. Requires airlock approval.",
+      "side_effects": "external",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable Base ID (e.g. appXXXXXXXXXXXXXX)"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table"
+          },
+          "fields_to_merge_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Field names used to determine whether a record already exists (e.g. ['Email'])"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "fields": {
+                  "type": "object",
+                  "description": "Key-value mapping of field names to values"
+                }
+              },
+              "required": [
+                "fields"
+              ]
+            },
+            "description": "Array of up to 100 record objects to upsert (auto-chunked)"
+          },
+          "notify_text": {
+            "type": "string",
+            "description": "Optional audit note to post as a comment on modified records"
+          },
+          "max_comments": {
+            "type": "integer",
+            "description": "Maximum number of modified records to attach comments to (default 10)"
+          },
+          "typecast": {
+            "type": "boolean",
+            "description": "Perform best-effort automatic data conversion"
+          }
+        },
+        "required": [
+          "base_id",
+          "table_name",
+          "fields_to_merge_on",
+          "records"
+        ]
+      },
+      "id": "sync_and_notify",
+      "title": "Sync Records & Notify"
     }
   ],
   "manifest_version": 2,

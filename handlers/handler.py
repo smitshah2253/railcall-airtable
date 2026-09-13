@@ -3,12 +3,19 @@ Integrates with the Airtable REST API.
 """
 
 import json
+import random
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 AIRTABLE_API_BASE = "https://api.airtable.com/v0"
+MAX_RETRIES = 3
+INITIAL_BACKOFF = 1.0  # seconds
+BATCH_CHUNK_SIZE = 10
+MAX_BATCH_TOTAL = 100
+FREE_TIER_LIMIT = 1000
 
 
 def _get_api_key(context: Optional[Dict[str, Any]]) -> str:
@@ -40,6 +47,12 @@ def _sanitize_error_message(msg: str, pat: str) -> str:
     return msg
 
 
+def _chunk_list(items: list, chunk_size: int = BATCH_CHUNK_SIZE):
+    """Yield successive chunks of items with size chunk_size."""
+    for i in range(0, len(items), chunk_size):
+        yield items[i : i + chunk_size]
+
+
 def _make_request(
     endpoint: str,
     method: str,
@@ -49,6 +62,8 @@ def _make_request(
 ) -> Dict[str, Any]:
     """Execute an HTTP request to the Airtable REST API using Python stdlib.
     
+    Includes automatic exponential backoff retry with jitter on HTTP 429
+    (Rate Limit Exceeded), designed for Airtable's 5 req/sec free-tier limit.
     Returns a standardized dictionary response.
     """
     url = f"{AIRTABLE_API_BASE}/{endpoint.lstrip('/')}"
@@ -60,76 +75,102 @@ def _make_request(
         "Authorization": f"Bearer {pat}",
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "User-Agent": "RailCall-Module-Airtable/1.0.0",
+        "User-Agent": "RailCall-Module-Airtable/1.0.5",
     }
 
     body = json.dumps(data).encode("utf-8") if data is not None else None
-    req = urllib.request.Request(url, data=body, headers=headers, method=method.upper())
 
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            status_code = resp.status
-            content = resp.read().decode("utf-8")
-            parsed = json.loads(content) if content else {}
-            return {
-                "success": True,
-                "status_code": status_code,
-                "data": parsed,
-            }
-    except urllib.error.HTTPError as err:
-        error_body = ""
+    for attempt in range(MAX_RETRIES + 1):
+        req = urllib.request.Request(url, data=body, headers=headers, method=method.upper())
         try:
-            error_body = err.read().decode("utf-8")
-            error_json = json.loads(error_body)
-            err_details = error_json.get("error", {})
-        except Exception:
-            err_details = {"message": error_body or str(err)}
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                status_code = resp.status
+                content = resp.read().decode("utf-8")
+                parsed = json.loads(content) if content else {}
+                return {
+                    "success": True,
+                    "status_code": status_code,
+                    "data": parsed,
+                }
+        except urllib.error.HTTPError as err:
+            # Handle rate limiting (429) with exponential backoff & Retry-After header
+            if err.code == 429 and attempt < MAX_RETRIES:
+                retry_after = None
+                if hasattr(err, "headers") and err.headers:
+                    retry_header = err.headers.get("Retry-After")
+                    if retry_header:
+                        try:
+                            retry_after = float(retry_header)
+                        except (ValueError, TypeError):
+                            pass
+                if retry_after is None:
+                    # Exponential backoff with jitter: 1s, 2s, 4s + jitter
+                    retry_after = INITIAL_BACKOFF * (2 ** attempt) + random.uniform(0.1, 0.5)
+                time.sleep(retry_after)
+                continue
 
-        status = err.code
-        code_map = {
-            401: "UNAUTHORIZED",
-            403: "FORBIDDEN",
-            404: "NOT_FOUND",
-            422: "UNPROCESSABLE_ENTITY",
-            429: "RATE_LIMIT_EXCEEDED",
-        }
-        error_code = code_map.get(status, f"HTTP_{status}")
+            error_body = ""
+            try:
+                error_body = err.read().decode("utf-8")
+                error_json = json.loads(error_body)
+                err_details = error_json.get("error", {})
+            except Exception:
+                err_details = {"message": error_body or str(err)}
 
-        if isinstance(err_details, dict):
-            raw_msg = err_details.get("message") or err_details.get("type") or str(err)
-        else:
-            raw_msg = str(err_details)
+            status = err.code
+            code_map = {
+                401: "UNAUTHORIZED",
+                403: "FORBIDDEN",
+                404: "NOT_FOUND",
+                422: "UNPROCESSABLE_ENTITY",
+                429: "RATE_LIMIT_EXCEEDED",
+            }
+            error_code = code_map.get(status, f"HTTP_{status}")
 
-        safe_msg = _sanitize_error_message(str(raw_msg), pat)
-        return {
-            "success": False,
-            "status_code": status,
-            "error": {
-                "code": error_code,
-                "message": safe_msg,
-                "details": err_details if isinstance(err_details, dict) else {},
-            },
-        }
-    except urllib.error.URLError as err:
-        safe_msg = _sanitize_error_message(str(err.reason), pat)
-        return {
-            "success": False,
-            "status_code": None,
-            "error": {
-                "code": "NETWORK_ERROR",
-                "message": f"Network error connecting to Airtable: {safe_msg}",
-            },
-        }
-    except Exception as exc:
-        safe_msg = _sanitize_error_message(str(exc), pat)
-        return {
-            "success": False,
-            "status_code": None,
-            "error": {
-                "code": "INTERNAL_ERROR",
-                "message": f"Unexpected execution error: {safe_msg}",
-            },
-        }
+            if isinstance(err_details, dict):
+                raw_msg = err_details.get("message") or err_details.get("type") or str(err)
+            else:
+                raw_msg = str(err_details)
+
+            safe_msg = _sanitize_error_message(str(raw_msg), pat)
+            return {
+                "success": False,
+                "status_code": status,
+                "error": {
+                    "code": error_code,
+                    "message": safe_msg,
+                    "details": err_details if isinstance(err_details, dict) else {},
+                },
+            }
+        except urllib.error.URLError as err:
+            safe_msg = _sanitize_error_message(str(err.reason), pat)
+            return {
+                "success": False,
+                "status_code": None,
+                "error": {
+                    "code": "NETWORK_ERROR",
+                    "message": f"Network error connecting to Airtable: {safe_msg}",
+                },
+            }
+        except Exception as exc:
+            safe_msg = _sanitize_error_message(str(exc), pat)
+            return {
+                "success": False,
+                "status_code": None,
+                "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": f"Unexpected execution error: {safe_msg}",
+                },
+            }
+
+    return {
+        "success": False,
+        "status_code": 429,
+        "error": {
+            "code": "RATE_LIMIT_EXCEEDED",
+            "message": f"Request failed after {MAX_RETRIES} retry attempts due to rate limiting.",
+        },
+    }
 
 
 # --- Command Handlers ---
@@ -485,8 +526,10 @@ def list_tables(inputs: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, An
 
 
 def batch_create_records(inputs: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
-    """Create up to 10 records in a single batch request.
+    """Create records in batch in the specified Airtable table.
     
+    Automatically chunks payloads into batches of 10 (Airtable REST limit) up to
+    100 total records per invocation.
     Mutating action: Requires external side_effects declaration and airlock approval.
     """
     try:
@@ -505,8 +548,14 @@ def batch_create_records(inputs: Dict[str, Any], context: Dict[str, Any]) -> Dic
         return {"success": False, "error": {"code": "INVALID_INPUT", "message": "table_name is required"}}
     if not isinstance(records, list) or len(records) == 0:
         return {"success": False, "error": {"code": "INVALID_INPUT", "message": "records must be a non-empty array of objects"}}
-    if len(records) > 10:
-        return {"success": False, "error": {"code": "INVALID_INPUT", "message": "Airtable allows a maximum of 10 records per batch request"}}
+    if len(records) > MAX_BATCH_TOTAL:
+        return {
+            "success": False,
+            "error": {
+                "code": "INVALID_INPUT",
+                "message": f"Maximum allowed batch size is {MAX_BATCH_TOTAL} records across chunked operations (received {len(records)})",
+            },
+        }
 
     for idx, item in enumerate(records):
         if not isinstance(item, dict) or "fields" not in item or not isinstance(item["fields"], dict):
@@ -520,34 +569,45 @@ def batch_create_records(inputs: Dict[str, Any], context: Dict[str, Any]) -> Dic
 
     encoded_table = urllib.parse.quote(table_name, safe="")
     endpoint = f"{base_id}/{encoded_table}"
-    payload: Dict[str, Any] = {"records": records}
-    if typecast:
-        payload["typecast"] = True
 
-    resp = _make_request(endpoint, "POST", pat, data=payload)
-    if not resp["success"]:
-        return resp
+    all_formatted = []
+    for chunk in _chunk_list(records, BATCH_CHUNK_SIZE):
+        payload: Dict[str, Any] = {"records": chunk}
+        if typecast:
+            payload["typecast"] = True
 
-    created_records = resp["data"].get("records", [])
-    formatted = [
-        {
-            "id": r.get("id"),
-            "created_time": r.get("createdTime"),
-            "fields": r.get("fields", {}),
-        }
-        for r in created_records
-    ]
+        resp = _make_request(endpoint, "POST", pat, data=payload)
+        if not resp["success"]:
+            if not all_formatted:
+                return resp
+            return {
+                "success": False,
+                "partial": True,
+                "count": len(all_formatted),
+                "records": all_formatted,
+                "error": resp.get("error", {}),
+            }
+
+        created_records = resp["data"].get("records", [])
+        for r in created_records:
+            all_formatted.append({
+                "id": r.get("id"),
+                "created_time": r.get("createdTime"),
+                "fields": r.get("fields", {}),
+            })
 
     return {
         "success": True,
-        "count": len(formatted),
-        "records": formatted,
+        "count": len(all_formatted),
+        "records": all_formatted,
     }
 
 
 def batch_update_records(inputs: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
-    """Update up to 10 records in a single batch request (PATCH).
+    """Update records in batch in the specified Airtable table (PATCH).
     
+    Automatically chunks payloads into batches of 10 (Airtable REST limit) up to
+    100 total records per invocation.
     Mutating action: Requires external side_effects declaration and airlock approval.
     """
     try:
@@ -566,8 +626,14 @@ def batch_update_records(inputs: Dict[str, Any], context: Dict[str, Any]) -> Dic
         return {"success": False, "error": {"code": "INVALID_INPUT", "message": "table_name is required"}}
     if not isinstance(records, list) or len(records) == 0:
         return {"success": False, "error": {"code": "INVALID_INPUT", "message": "records must be a non-empty array of objects"}}
-    if len(records) > 10:
-        return {"success": False, "error": {"code": "INVALID_INPUT", "message": "Airtable allows a maximum of 10 records per batch request"}}
+    if len(records) > MAX_BATCH_TOTAL:
+        return {
+            "success": False,
+            "error": {
+                "code": "INVALID_INPUT",
+                "message": f"Maximum allowed batch size is {MAX_BATCH_TOTAL} records across chunked operations (received {len(records)})",
+            },
+        }
 
     for idx, item in enumerate(records):
         if not isinstance(item, dict) or not item.get("id") or not isinstance(item.get("fields"), dict):
@@ -581,34 +647,45 @@ def batch_update_records(inputs: Dict[str, Any], context: Dict[str, Any]) -> Dic
 
     encoded_table = urllib.parse.quote(table_name, safe="")
     endpoint = f"{base_id}/{encoded_table}"
-    payload: Dict[str, Any] = {"records": records}
-    if typecast:
-        payload["typecast"] = True
 
-    resp = _make_request(endpoint, "PATCH", pat, data=payload)
-    if not resp["success"]:
-        return resp
+    all_formatted = []
+    for chunk in _chunk_list(records, BATCH_CHUNK_SIZE):
+        payload: Dict[str, Any] = {"records": chunk}
+        if typecast:
+            payload["typecast"] = True
 
-    updated_records = resp["data"].get("records", [])
-    formatted = [
-        {
-            "id": r.get("id"),
-            "created_time": r.get("createdTime"),
-            "fields": r.get("fields", {}),
-        }
-        for r in updated_records
-    ]
+        resp = _make_request(endpoint, "PATCH", pat, data=payload)
+        if not resp["success"]:
+            if not all_formatted:
+                return resp
+            return {
+                "success": False,
+                "partial": True,
+                "count": len(all_formatted),
+                "records": all_formatted,
+                "error": resp.get("error", {}),
+            }
+
+        updated_records = resp["data"].get("records", [])
+        for r in updated_records:
+            all_formatted.append({
+                "id": r.get("id"),
+                "created_time": r.get("createdTime"),
+                "fields": r.get("fields", {}),
+            })
 
     return {
         "success": True,
-        "count": len(formatted),
-        "records": formatted,
+        "count": len(all_formatted),
+        "records": all_formatted,
     }
 
 
 def batch_delete_records(inputs: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
-    """Delete up to 10 records in a single batch request.
+    """Delete records in batch in the specified Airtable table.
     
+    Automatically chunks IDs into batches of 10 (Airtable REST limit) up to
+    100 total records per invocation.
     Mutating action: Requires external side_effects declaration and airlock approval.
     """
     try:
@@ -626,28 +703,48 @@ def batch_delete_records(inputs: Dict[str, Any], context: Dict[str, Any]) -> Dic
         return {"success": False, "error": {"code": "INVALID_INPUT", "message": "table_name is required"}}
     if not isinstance(record_ids, list) or len(record_ids) == 0:
         return {"success": False, "error": {"code": "INVALID_INPUT", "message": "record_ids must be a non-empty array of record IDs"}}
-    if len(record_ids) > 10:
-        return {"success": False, "error": {"code": "INVALID_INPUT", "message": "Airtable allows a maximum of 10 records per batch delete"}}
+    if len(record_ids) > MAX_BATCH_TOTAL:
+        return {
+            "success": False,
+            "error": {
+                "code": "INVALID_INPUT",
+                "message": f"Maximum allowed batch size is {MAX_BATCH_TOTAL} records across chunked operations (received {len(record_ids)})",
+            },
+        }
 
     encoded_table = urllib.parse.quote(table_name, safe="")
     endpoint = f"{base_id}/{encoded_table}"
-    params = {"records[]": record_ids}
 
-    resp = _make_request(endpoint, "DELETE", pat, query_params=params)
-    if not resp["success"]:
-        return resp
+    all_deleted = []
+    for chunk in _chunk_list(record_ids, BATCH_CHUNK_SIZE):
+        params = {"records[]": chunk}
+        resp = _make_request(endpoint, "DELETE", pat, query_params=params)
+        if not resp["success"]:
+            if not all_deleted:
+                return resp
+            return {
+                "success": False,
+                "partial": True,
+                "count": len(all_deleted),
+                "records": all_deleted,
+                "error": resp.get("error", {}),
+            }
 
-    deleted_records = resp["data"].get("records", [])
+        deleted_records = resp["data"].get("records", [])
+        all_deleted.extend(deleted_records)
+
     return {
         "success": True,
-        "count": len(deleted_records),
-        "records": deleted_records,
+        "count": len(all_deleted),
+        "records": all_deleted,
     }
 
 
 def batch_upsert_records(inputs: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
-    """Perform upsert (insert-or-update) matching on specified key fields for up to 10 records.
+    """Perform upsert (insert-or-update) matching on specified key fields.
     
+    Automatically chunks payloads into batches of 10 (Airtable REST limit) up to
+    100 total records per invocation.
     Mutating action: Requires external side_effects declaration and airlock approval.
     """
     try:
@@ -675,8 +772,14 @@ def batch_upsert_records(inputs: Dict[str, Any], context: Dict[str, Any]) -> Dic
         }
     if not isinstance(records, list) or len(records) == 0:
         return {"success": False, "error": {"code": "INVALID_INPUT", "message": "records must be a non-empty array of objects"}}
-    if len(records) > 10:
-        return {"success": False, "error": {"code": "INVALID_INPUT", "message": "Airtable allows a maximum of 10 records per batch upsert"}}
+    if len(records) > MAX_BATCH_TOTAL:
+        return {
+            "success": False,
+            "error": {
+                "code": "INVALID_INPUT",
+                "message": f"Maximum allowed batch size is {MAX_BATCH_TOTAL} records across chunked operations (received {len(records)})",
+            },
+        }
 
     for idx, item in enumerate(records):
         if not isinstance(item, dict) or "fields" not in item or not isinstance(item["fields"], dict):
@@ -690,34 +793,50 @@ def batch_upsert_records(inputs: Dict[str, Any], context: Dict[str, Any]) -> Dic
 
     encoded_table = urllib.parse.quote(table_name, safe="")
     endpoint = f"{base_id}/{encoded_table}"
-    payload: Dict[str, Any] = {
-        "performUpsert": {"fieldsToMergeOn": fields_to_merge_on},
-        "records": records,
-    }
-    if typecast:
-        payload["typecast"] = True
 
-    resp = _make_request(endpoint, "PATCH", pat, data=payload)
-    if not resp["success"]:
-        return resp
+    all_formatted = []
+    all_created = []
+    all_updated = []
 
-    data = resp["data"]
-    raw_records = data.get("records", [])
-    formatted = [
-        {
-            "id": r.get("id"),
-            "created_time": r.get("createdTime"),
-            "fields": r.get("fields", {}),
+    for chunk in _chunk_list(records, BATCH_CHUNK_SIZE):
+        payload: Dict[str, Any] = {
+            "performUpsert": {"fieldsToMergeOn": fields_to_merge_on},
+            "records": chunk,
         }
-        for r in raw_records
-    ]
+        if typecast:
+            payload["typecast"] = True
+
+        resp = _make_request(endpoint, "PATCH", pat, data=payload)
+        if not resp["success"]:
+            if not all_formatted:
+                return resp
+            return {
+                "success": False,
+                "partial": True,
+                "count": len(all_formatted),
+                "created_records": all_created,
+                "updated_records": all_updated,
+                "records": all_formatted,
+                "error": resp.get("error", {}),
+            }
+
+        data = resp["data"]
+        all_created.extend(data.get("createdRecords", []))
+        all_updated.extend(data.get("updatedRecords", []))
+        raw_records = data.get("records", [])
+        for r in raw_records:
+            all_formatted.append({
+                "id": r.get("id"),
+                "created_time": r.get("createdTime"),
+                "fields": r.get("fields", {}),
+            })
 
     return {
         "success": True,
-        "count": len(formatted),
-        "created_records": data.get("createdRecords", []),
-        "updated_records": data.get("updatedRecords", []),
-        "records": formatted,
+        "count": len(all_formatted),
+        "created_records": all_created,
+        "updated_records": all_updated,
+        "records": all_formatted,
     }
 
 
@@ -1133,4 +1252,144 @@ def list_webhooks(inputs: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, 
         "count": len(webhooks),
         "webhooks": webhooks,
     }
+
+
+def count_records(inputs: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+    """Count total records in an Airtable table and monitor Free Tier limit capacity.
+    
+    Airtable Free Tier enforces a strict hard ceiling of 1,000 records per base.
+    This helper paginates with minimal payload (empty fields parameter) to efficiently
+    gauge current base usage and capacity remaining before writes fail.
+    Read-only action (side_effects: "none").
+    """
+    try:
+        pat = _get_api_key(context)
+    except ValueError as e:
+        return {"success": False, "error": {"code": "AUTH_ERROR", "message": str(e)}}
+
+    base_id = inputs.get("base_id", "").strip()
+    table_name = inputs.get("table_name", "").strip()
+    view = inputs.get("view")
+    filter_by_formula = inputs.get("filter_by_formula")
+
+    if not base_id:
+        return {"success": False, "error": {"code": "INVALID_INPUT", "message": "base_id is required"}}
+    if not table_name:
+        return {"success": False, "error": {"code": "INVALID_INPUT", "message": "table_name is required"}}
+
+    encoded_table = urllib.parse.quote(table_name, safe="")
+    endpoint = f"{base_id}/{encoded_table}"
+
+    total_count = 0
+    offset = None
+
+    while True:
+        params: Dict[str, Any] = {
+            "pageSize": 100,
+            "fields[]": "",
+        }
+        if view:
+            params["view"] = view
+        if filter_by_formula:
+            params["filterByFormula"] = filter_by_formula
+        if offset:
+            params["offset"] = offset
+
+        resp = _make_request(endpoint, "GET", pat, query_params=params)
+        if not resp["success"]:
+            return resp
+
+        records = resp["data"].get("records", [])
+        total_count += len(records)
+        offset = resp["data"].get("offset")
+        if not offset:
+            break
+
+    remaining = max(0, FREE_TIER_LIMIT - total_count)
+    percent_used = round((total_count / FREE_TIER_LIMIT) * 100, 1)
+    at_capacity = total_count >= FREE_TIER_LIMIT
+    warning = None
+    if at_capacity:
+        warning = f"Table has reached or exceeded the 1,000 record Free Tier ceiling ({total_count} records). Writes may fail with 422 errors."
+    elif total_count >= 850:
+        warning = f"Table is nearing the 1,000 record Free Tier ceiling ({total_count}/1,000 records used - {remaining} remaining)."
+
+    return {
+        "success": True,
+        "count": total_count,
+        "table_name": table_name,
+        "free_tier_limit": FREE_TIER_LIMIT,
+        "remaining": remaining,
+        "percent_used": percent_used,
+        "at_capacity": at_capacity,
+        "warning": warning,
+    }
+
+
+def sync_and_notify(inputs: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+    """Compound automation: Upsert records matching on unique keys and attach audit comments.
+    
+    Perfect for Free Tier teams lacking paid webhooks or enterprise automation runs.
+    Upserts up to 100 records and optionally leaves audit trail comments on created/updated
+    records so teammates see agent changes directly in Airtable.
+    Mutating action: Requires external side_effects declaration and airlock approval.
+    """
+    base_id = inputs.get("base_id", "").strip()
+    table_name = inputs.get("table_name", "").strip()
+    notify_text = inputs.get("notify_text")
+    max_comments = inputs.get("max_comments", 10)
+
+    # 1. Perform batch upsert
+    upsert_res = batch_upsert_records(inputs, context)
+    if not upsert_res.get("success"):
+        return upsert_res
+
+    comments_added = 0
+    comment_errors = []
+
+    # 2. If notification text provided, annotate newly created and updated records
+    if notify_text:
+        target_record_ids = []
+        created_ids = upsert_res.get("created_records", [])
+        updated_ids = upsert_res.get("updated_records", [])
+
+        for item in created_ids + updated_ids:
+            rec_id = item if isinstance(item, str) else (item.get("id") if isinstance(item, dict) else None)
+            if rec_id and rec_id not in target_record_ids:
+                target_record_ids.append(rec_id)
+
+        if not target_record_ids:
+            for r in upsert_res.get("records", []):
+                rec_id = r.get("id")
+                if rec_id and rec_id not in target_record_ids:
+                    target_record_ids.append(rec_id)
+
+        for rec_id in target_record_ids[:max_comments]:
+            comment_res = add_comment(
+                {
+                    "base_id": base_id,
+                    "table_name": table_name,
+                    "record_id": rec_id,
+                    "text": str(notify_text),
+                },
+                context,
+            )
+            if comment_res.get("success"):
+                comments_added += 1
+            else:
+                comment_errors.append({
+                    "record_id": rec_id,
+                    "error": comment_res.get("error"),
+                })
+
+    return {
+        "success": True,
+        "count": upsert_res["count"],
+        "created_records": upsert_res.get("created_records", []),
+        "updated_records": upsert_res.get("updated_records", []),
+        "comments_added": comments_added,
+        "comment_errors": comment_errors,
+        "records": upsert_res.get("records", []),
+    }
+
 

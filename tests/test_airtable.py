@@ -62,15 +62,15 @@ class TestAirtableOffline(unittest.TestCase):
         self.assertEqual(res["error"]["code"], "INVALID_INPUT")
 
     def test_batch_validation_size_limits(self):
-        # Over 10 items should fail validation
-        records_11 = [{"fields": {"Name": f"Item {i}"}} for i in range(11)]
+        # Over 100 items should fail validation
+        records_101 = [{"fields": {"Name": f"Item {i}"}} for i in range(101)]
         res = handler.batch_create_records(
-            {"base_id": "app123", "table_name": "T", "records": records_11},
+            {"base_id": "app123", "table_name": "T", "records": records_101},
             self.mock_context,
         )
         self.assertFalse(res["success"])
         self.assertEqual(res["error"]["code"], "INVALID_INPUT")
-        self.assertIn("maximum of 10 records", res["error"]["message"])
+        self.assertIn("Maximum allowed batch size is 100 records", res["error"]["message"])
 
         # Empty array should fail validation
         res = handler.batch_create_records(
@@ -617,6 +617,211 @@ class TestAirtableOffline(unittest.TestCase):
         self.assertNotIn(secret, result["error"]["message"])
         self.assertIn("[REDACTED_PAT]", result["error"]["message"])
 
+    # --- Free-Tier Optimization Tests: 429 Retry, Auto-Chunking & Capacity ---
+
+    @patch("time.sleep")
+    @patch("urllib.request.urlopen")
+    def test_rate_limit_429_retry_success(self, mock_urlopen, mock_sleep):
+        # 1st call raises 429 with Retry-After header, 2nd call succeeds
+        error_json = json.dumps({
+            "error": {"type": "RATE_LIMIT_EXCEEDED", "message": "Too many requests"}
+        }).encode("utf-8")
+
+        mock_hdrs = MagicMock()
+        mock_hdrs.get.return_value = "0.5"
+
+        err_429 = urllib.error.HTTPError(
+            url="https://api.airtable.com/v0/appTestBase/Tasks",
+            code=429,
+            msg="Too Many Requests",
+            hdrs=mock_hdrs,
+            fp=MagicMock(read=MagicMock(return_value=error_json)),
+        )
+
+        mock_ok = MagicMock()
+        mock_ok.status = 200
+        mock_ok.read.return_value = json.dumps({
+            "id": "recSuccessAfterRetry",
+            "createdTime": "2026-09-13T00:00:00.000Z",
+            "fields": {"Name": "Retry Success"},
+        }).encode("utf-8")
+        mock_ok.__enter__.return_value = mock_ok
+
+        mock_urlopen.side_effect = [err_429, mock_ok]
+
+        result = handler.create_record(
+            {"base_id": "appTestBase", "table_name": "Tasks", "fields": {"Name": "Retry Success"}},
+            self.mock_context,
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["record_id"], "recSuccessAfterRetry")
+        self.assertEqual(mock_urlopen.call_count, 2)
+        mock_sleep.assert_called_once_with(0.5)
+
+    @patch("time.sleep")
+    @patch("urllib.request.urlopen")
+    def test_rate_limit_429_max_retries_exhausted(self, mock_urlopen, mock_sleep):
+        # All 4 calls (initial + 3 retries) fail with 429
+        error_json = json.dumps({
+            "error": {"type": "RATE_LIMIT_EXCEEDED", "message": "Rate limit sustained"}
+        }).encode("utf-8")
+
+        mock_hdrs = MagicMock()
+        mock_hdrs.get.return_value = "0.2"
+
+        def make_err():
+            return urllib.error.HTTPError(
+                url="https://api.airtable.com/v0/appTestBase/Tasks",
+                code=429,
+                msg="Too Many Requests",
+                hdrs=mock_hdrs,
+                fp=MagicMock(read=MagicMock(return_value=error_json)),
+            )
+
+        mock_urlopen.side_effect = [make_err(), make_err(), make_err(), make_err()]
+
+        result = handler.create_record(
+            {"base_id": "appTestBase", "table_name": "Tasks", "fields": {"Name": "Will Fail"}},
+            self.mock_context,
+        )
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error"]["code"], "RATE_LIMIT_EXCEEDED")
+        self.assertEqual(mock_urlopen.call_count, 4)
+        self.assertEqual(mock_sleep.call_count, 3)
+
+    @patch("urllib.request.urlopen")
+    def test_batch_create_records_autochunking_mock(self, mock_urlopen):
+        # 25 records chunked into 3 requests (10, 10, 5)
+        records_25 = [{"fields": {"Name": f"Item {i}"}} for i in range(25)]
+
+        def fake_urlopen(req, timeout=30):
+            body_dict = json.loads(req.data.decode("utf-8"))
+            chunk_recs = body_dict["records"]
+            resp_data = {
+                "records": [
+                    {"id": f"recChunk_{r['fields']['Name']}", "createdTime": "2026-09-13T00:00:00.000Z", "fields": r["fields"]}
+                    for r in chunk_recs
+                ]
+            }
+            mock_resp = MagicMock()
+            mock_resp.status = 200
+            mock_resp.read.return_value = json.dumps(resp_data).encode("utf-8")
+            mock_resp.__enter__.return_value = mock_resp
+            return mock_resp
+
+        mock_urlopen.side_effect = fake_urlopen
+
+        result = handler.batch_create_records(
+            {"base_id": "appTestBase", "table_name": "Tasks", "records": records_25},
+            self.mock_context,
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["count"], 25)
+        self.assertEqual(len(result["records"]), 25)
+        self.assertEqual(mock_urlopen.call_count, 3)
+
+    @patch("urllib.request.urlopen")
+    def test_count_records_pagination_and_capacity_mock(self, mock_urlopen):
+        page1_resp = MagicMock()
+        page1_resp.status = 200
+        page1_resp.read.return_value = json.dumps({
+            "records": [{"id": f"rec_{i}", "fields": {}} for i in range(100)],
+            "offset": "page2_cursor",
+        }).encode("utf-8")
+        page1_resp.__enter__.return_value = page1_resp
+
+        page2_resp = MagicMock()
+        page2_resp.status = 200
+        page2_resp.read.return_value = json.dumps({
+            "records": [{"id": f"rec_{i}", "fields": {}} for i in range(100, 145)],
+        }).encode("utf-8")
+        page2_resp.__enter__.return_value = page2_resp
+
+        mock_urlopen.side_effect = [page1_resp, page2_resp]
+
+        result = handler.count_records(
+            {"base_id": "appTestBase", "table_name": "Tasks"},
+            self.mock_context,
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["count"], 145)
+        self.assertEqual(result["free_tier_limit"], 1000)
+        self.assertEqual(result["remaining"], 855)
+        self.assertEqual(result["percent_used"], 14.5)
+        self.assertFalse(result["at_capacity"])
+        self.assertIsNone(result["warning"])
+        self.assertEqual(mock_urlopen.call_count, 2)
+
+    @patch("urllib.request.urlopen")
+    def test_count_records_at_capacity_mock(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read.return_value = json.dumps({
+            "records": [{"id": f"rec_{i}", "fields": {}} for i in range(1000)],
+        }).encode("utf-8")
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        result = handler.count_records(
+            {"base_id": "appTestBase", "table_name": "Tasks"},
+            self.mock_context,
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["count"], 1000)
+        self.assertEqual(result["remaining"], 0)
+        self.assertTrue(result["at_capacity"])
+        self.assertIsNotNone(result["warning"])
+        self.assertIn("1,000 record Free Tier ceiling", result["warning"])
+
+    @patch("urllib.request.urlopen")
+    def test_sync_and_notify_mock(self, mock_urlopen):
+        upsert_resp = MagicMock()
+        upsert_resp.status = 200
+        upsert_resp.read.return_value = json.dumps({
+            "createdRecords": ["recNew01"],
+            "updatedRecords": ["recOld02"],
+            "records": [
+                {"id": "recNew01", "createdTime": "2026-09-13T00:00:00.000Z", "fields": {"Email": "new@a.com"}},
+                {"id": "recOld02", "createdTime": "2026-09-13T00:00:00.000Z", "fields": {"Email": "old@a.com"}},
+            ],
+        }).encode("utf-8")
+        upsert_resp.__enter__.return_value = upsert_resp
+
+        comment_resp = MagicMock()
+        comment_resp.status = 200
+        comment_resp.read.return_value = json.dumps({
+            "id": "comSyncAudit",
+            "text": "Audit: Synced by RailCall Agent",
+            "createdTime": "2026-09-13T00:00:00.000Z",
+        }).encode("utf-8")
+        comment_resp.__enter__.return_value = comment_resp
+
+        mock_urlopen.side_effect = [upsert_resp, comment_resp, comment_resp]
+
+        result = handler.sync_and_notify(
+            {
+                "base_id": "appTestBase",
+                "table_name": "Users",
+                "fields_to_merge_on": ["Email"],
+                "records": [
+                    {"fields": {"Email": "new@a.com"}},
+                    {"fields": {"Email": "old@a.com"}},
+                ],
+                "notify_text": "Audit: Synced by RailCall Agent",
+            },
+            self.mock_context,
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["count"], 2)
+        self.assertEqual(result["comments_added"], 2)
+        self.assertEqual(mock_urlopen.call_count, 3)
+
 
 def run_live_tests(pat: str, base_id: str, table_name: str, field_name: str = "Name"):
     """Executes end-to-end integration tests against real Airtable base."""
@@ -723,12 +928,17 @@ def run_live_tests(pat: str, base_id: str, table_name: str, field_name: str = "N
     check("search_records", res)
 
     # 10. delete_record (clean up)
-    print(f"\n[10/10] Testing delete_record (cleanup {created_id})...")
+    print(f"\n[10/11] Testing delete_record (cleanup {created_id})...")
     res = handler.delete_record(
         {"base_id": base_id, "table_name": table_name, "record_id": created_id},
         context,
     )
     check("delete_record (self-cleanup)", res)
+
+    # 11. count_records (free tier capacity gauge)
+    print(f"\n[11/11] Testing count_records (free tier capacity gauge)...")
+    res = handler.count_records({"base_id": base_id, "table_name": table_name}, context)
+    check("count_records", res)
 
     print("\n" + "=" * 60)
     print(f"INTEGRATION TEST COMPLETE: {passed}/{total} PASSED")
